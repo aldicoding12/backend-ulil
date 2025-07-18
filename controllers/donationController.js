@@ -172,7 +172,7 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
 
   if (transactionStatus === "capture") {
     if (fraudStatus === "accept") {
-      paymentStatus = "settlement";
+      paymentStatus = "success";
     }
   } else if (transactionStatus === "settlement") {
     paymentStatus = "settlement";

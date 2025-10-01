@@ -5,6 +5,7 @@ import {
   getNewsById,
   updateNews,
   deleteNews,
+  getNewsStats,
 } from "../controllers/newsController.js";
 import { upload } from "../middlewares/upload.js";
 import { jamaah, pengurus } from "../middlewares/authMiddleware.js";
@@ -25,5 +26,7 @@ router.put("/:id", upload.single("image"), updateNews);
 
 // Delete by ID
 router.delete("/:id", deleteNews);
+
+router.get("/stats", getNewsStats);
 
 export default router;

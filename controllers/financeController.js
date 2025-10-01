@@ -37,10 +37,7 @@ import {
 // ✅ CREATE INCOME - Enhanced dengan real-time sync
 export const addIncome = asyncHandler(async (req, res) => {
   try {
-    console.log("💰 Creating new income:", req.body);
-
     const newIncome = await createIncome(req.body);
-    console.log("✅ Income created:", newIncome);
 
     // Enhanced: Sync balance dengan invalidation cache
     const syncResult = await syncBalanceAfterTransaction(newIncome, "create");
@@ -70,10 +67,7 @@ export const addIncome = asyncHandler(async (req, res) => {
 // ✅ CREATE EXPENSE - Enhanced dengan real-time sync
 export const addExpense = asyncHandler(async (req, res) => {
   try {
-    console.log("💸 Creating new expense:", req.body);
-
     const newExpense = await createExpense(req.body);
-    console.log("✅ Expense created:", newExpense);
 
     // Enhanced: Sync balance dengan invalidation cache
     const syncResult = await syncBalanceAfterTransaction(newExpense, "create");
@@ -104,7 +98,6 @@ export const addExpense = asyncHandler(async (req, res) => {
 export const editIncome = asyncHandler(async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("✏️ Updating income:", id, req.body);
 
     // Get original data untuk smart invalidation
     const originalIncome = await getIncomeById(id);
@@ -113,7 +106,6 @@ export const editIncome = asyncHandler(async (req, res) => {
     }
 
     const updatedIncome = await updateIncome(id, req.body);
-    console.log("✅ Income updated:", updatedIncome);
 
     // Smart cache invalidation - hanya invalidate yang terpengaruh
     await smartInvalidateCache(originalIncome, updatedIncome);
@@ -153,7 +145,6 @@ export const editIncome = asyncHandler(async (req, res) => {
 export const editExpense = asyncHandler(async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("✏️ Updating expense:", id, req.body);
 
     // Get original data untuk smart invalidation
     const originalExpense = await getExpenseById(id);
@@ -162,7 +153,6 @@ export const editExpense = asyncHandler(async (req, res) => {
     }
 
     const updatedExpense = await updateExpense(id, req.body);
-    console.log("✅ Expense updated:", updatedExpense);
 
     // Smart cache invalidation
     await smartInvalidateCache(originalExpense, updatedExpense);
@@ -209,8 +199,6 @@ export const removeIncome = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: "Pemasukan tidak ditemukan" });
     }
 
-    console.log("🗑️ Deleting income:", incomeToDelete);
-
     // Delete the income
     await deleteIncome(id);
 
@@ -256,8 +244,6 @@ export const removeExpense = asyncHandler(async (req, res) => {
     if (!expenseToDelete) {
       return res.status(404).json({ message: "Pengeluaran tidak ditemukan" });
     }
-
-    console.log("🗑️ Deleting expense:", expenseToDelete);
 
     // Delete the expense
     await deleteExpense(id);
@@ -326,9 +312,6 @@ export const syncBalanceManually = asyncHandler(async (req, res) => {
   try {
     const { clearCache = true } = req.body;
 
-    console.log("🔄 Memulai sinkronisasi saldo manual...");
-    console.log("🗑️ Clear cache:", clearCache);
-
     const syncedBalance = await syncBalance(clearCache);
 
     res.status(200).json({
@@ -364,11 +347,6 @@ export const weeklyReport = asyncHandler(async (req, res) => {
   refDate.setHours(0, 0, 0, 0);
 
   try {
-    console.log(
-      `📊 Generating weekly report for ${refDate.toISOString().split("T")[0]}`
-    );
-    console.log(`🔄 Force refresh: ${forceRefresh}`);
-
     const reportData = await generateWeeklyReportData(
       refDate,
       forceRefresh === "true"
@@ -403,11 +381,6 @@ export const monthlyReport = asyncHandler(async (req, res) => {
   }
 
   try {
-    console.log(
-      `📊 Generating monthly report for ${refDate.toISOString().split("T")[0]}`
-    );
-    console.log(`🔄 Force refresh: ${forceRefresh}`);
-
     const reportData = await generateMonthlyReportData(
       refDate,
       forceRefresh === "true"
@@ -447,13 +420,6 @@ export const yearlyReport = asyncHandler(async (req, res) => {
   }
 
   try {
-    console.log(
-      `📊 Generating yearly report from ${
-        startDate.toISOString().split("T")[0]
-      } to ${endDate.toISOString().split("T")[0]}`
-    );
-    console.log(`🔄 Force refresh: ${forceRefresh}`);
-
     const reportData = await generateYearlyReportData(
       startDate,
       endDate,
@@ -600,10 +566,6 @@ export const weeklyReportPDF = asyncHandler(async (req, res) => {
   refDate.setHours(0, 0, 0, 0);
 
   try {
-    console.log(
-      `📄 Generating weekly PDF for ${refDate.toISOString().split("T")[0]}`
-    );
-
     const reportData = await generateWeeklyReportData(
       refDate,
       forceRefresh === "true"
@@ -630,10 +592,6 @@ export const monthlyReportPDF = asyncHandler(async (req, res) => {
   }
 
   try {
-    console.log(
-      `📄 Generating monthly PDF for ${refDate.toISOString().split("T")[0]}`
-    );
-
     const reportData = await generateMonthlyReportData(
       refDate,
       forceRefresh === "true"
@@ -665,12 +623,6 @@ export const yearlyReportPDF = asyncHandler(async (req, res) => {
   }
 
   try {
-    console.log(
-      `📄 Generating yearly PDF from ${
-        startDate.toISOString().split("T")[0]
-      } to ${endDate.toISOString().split("T")[0]}`
-    );
-
     const reportData = await generateYearlyReportData(
       startDate,
       endDate,
@@ -699,7 +651,6 @@ export const yearlyReportPDF = asyncHandler(async (req, res) => {
 // Fungsi untuk broadcast real-time updates (jika menggunakan WebSocket)
 const broadcastFinanceUpdate = (eventType, data, currentBalance) => {
   // Implementasi WebSocket broadcast di sini
-  console.log(`🔔 Broadcasting ${eventType}:`, { data, currentBalance });
 
   // Contoh struktur event:
   const event = {

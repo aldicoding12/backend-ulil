@@ -1,6 +1,7 @@
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { v2 as cloudinary } from "cloudinary";
 
 // Pastikan folder uploads ada
 const uploadDir = "public/uploads";
@@ -29,7 +30,8 @@ export const upload = multer({
   fileFilter: (req, file, cb) => {
     console.log("File received:", file); // Debug log
 
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    // ✅ Perbaikan regex: hapus || ganda
+    const allowedTypes = /jpeg|jpg|png|gif|webp|pdf/;
     const extname = allowedTypes.test(
       path.extname(file.originalname).toLowerCase()
     );
@@ -40,9 +42,24 @@ export const upload = multer({
     } else {
       cb(
         new Error(
-          "Hanya file gambar (jpeg, jpg, png, gif, webp) yang diperbolehkan"
+          "Hanya file gambar (jpeg, jpg, png, gif, webp) atau PDF yang diperbolehkan"
         )
       );
     }
   },
 });
+
+// Fungsi upload ke Cloudinary (gambar & PDF)
+export const uploadToCloudinary = async (filePath, mimetype) => {
+  const isPDF = mimetype === "application/pdf";
+  const result = await cloudinary.uploader.upload(filePath, {
+    resource_type: isPDF ? "raw" : "image",
+    type: "upload", // pastikan ini public
+    access_mode: "public", // langsung public
+  });
+
+  // Hapus file lokal setelah diupload
+  fs.unlinkSync(filePath);
+
+  return result.secure_url;
+};

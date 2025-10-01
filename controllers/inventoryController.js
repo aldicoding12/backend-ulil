@@ -1,15 +1,11 @@
 import fs from "fs";
-import asyncHandler from "../middlewares/asyncHandler.js";
+import asyncHandler from "./../middlewares/asyncHandler.js";
 import cloudinary from "../utils/uploadFileHandler.js";
 import Inventory from "../models/Inventory.js";
 import mongoose from "mongoose";
 
 // CREATE inventory item + image
 export const createItem = asyncHandler(async (req, res) => {
-  console.log("=== CREATE INVENTORY DEBUG ===");
-  console.log("Body:", req.body);
-  console.log("File:", req.file);
-
   const { itemName, quantity, condition, isLendable, description } = req.body;
   let imageUrl = null;
   let imagePublicId = null;
@@ -29,15 +25,8 @@ export const createItem = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Upload ke Cloudinary
-    console.log("Uploading to Cloudinary:", req.file.path);
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "inventaris",
-    });
-
     imageUrl = result.secure_url;
     imagePublicId = result.public_id;
-    console.log("Upload success:", { imageUrl, imagePublicId });
 
     // Hapus file temporary
     fs.unlinkSync(req.file.path);
@@ -54,8 +43,6 @@ export const createItem = asyncHandler(async (req, res) => {
       availableQuantity: parseInt(quantity), // Set initial available quantity
       borrowings: [], // Initialize empty borrowings array
     });
-
-    console.log("Item created:", newItem);
     res.status(201).json({
       message: "Barang berhasil ditambahkan",
       data: newItem,
@@ -65,18 +52,12 @@ export const createItem = asyncHandler(async (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Create item error:", error);
     throw error;
   }
 });
 
 // UPDATE inventory item by ID
 export const updateItem = asyncHandler(async (req, res) => {
-  console.log("=== UPDATE INVENTORY DEBUG ===");
-  console.log("Params:", req.params);
-  console.log("Body:", req.body);
-  console.log("File:", req.file);
-
   const { id } = req.params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid ID format" });
@@ -119,49 +100,26 @@ export const updateItem = asyncHandler(async (req, res) => {
     });
   }
 
-  console.log("Existing item:", {
-    id: existingItem._id,
-    itemName: existingItem.itemName,
-    hasImage: !!existingItem.imageUrl,
-    imagePublicId: existingItem.imagePublicId,
-  });
-
   try {
     // Jika ada file gambar baru
     if (req.file) {
-      console.log("Processing new image file:", req.file.path);
-
       // Hapus gambar lama dari Cloudinary jika ada
       if (existingItem.imagePublicId) {
-        console.log(
-          "Deleting old image from Cloudinary:",
-          existingItem.imagePublicId
-        );
         try {
           await cloudinary.uploader.destroy(existingItem.imagePublicId);
-          console.log("Old image deleted successfully");
-        } catch (deleteError) {
-          console.error("Error deleting old image:", deleteError);
-        }
+        } catch (deleteError) {}
       }
 
       // Upload gambar baru
-      console.log("Uploading new image to Cloudinary");
       const result = await cloudinary.uploader.upload(req.file.path, {
         folder: "inventaris",
       });
 
       updateData.imageUrl = result.secure_url;
       updateData.imagePublicId = result.public_id;
-      console.log("New image uploaded:", {
-        imageUrl: updateData.imageUrl,
-        imagePublicId: updateData.imagePublicId,
-      });
-
       // Hapus file temporary
       fs.unlinkSync(req.file.path);
     } else {
-      console.log("No new image file, keeping existing image");
     }
 
     // Update data di database
@@ -169,12 +127,6 @@ export const updateItem = asyncHandler(async (req, res) => {
       new: true,
       runValidators: true,
     }).lean();
-
-    console.log("Item updated successfully:", {
-      id: updated._id,
-      itemName: updated.itemName,
-      hasImage: !!updated.imageUrl,
-    });
 
     res.status(200).json({
       message: "Barang berhasil diperbarui",
@@ -185,7 +137,6 @@ export const updateItem = asyncHandler(async (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Update item error:", error);
     throw error;
   }
 });
@@ -217,10 +168,7 @@ export const deleteItem = asyncHandler(async (req, res) => {
   if (item.imagePublicId) {
     try {
       await cloudinary.uploader.destroy(item.imagePublicId);
-      console.log("Image deleted from Cloudinary:", item.imagePublicId);
-    } catch (error) {
-      console.error("Error deleting image from Cloudinary:", error);
-    }
+    } catch (error) {}
   }
 
   // Hapus dokumen dari MongoDB
@@ -344,6 +292,7 @@ export const getItemById = asyncHandler(async (req, res) => {
 });
 
 // SUBMIT borrowing request
+// FIXED VERSION - submitBorrowingRequest function
 export const submitBorrowingRequest = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const {
@@ -352,62 +301,128 @@ export const submitBorrowingRequest = asyncHandler(async (req, res) => {
     institution,
     borrowDate,
     returnDate,
-    documentUrl,
     notes,
   } = req.body;
+
+  let documentUrl = null;
+  let documentPublicId = null;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid ID format" });
   }
 
-  if (
-    !borrowerName ||
-    !phoneNumber ||
-    !borrowDate ||
-    !returnDate ||
-    !documentUrl
-  ) {
+  // Validasi input wajib
+  if (!borrowerName || !phoneNumber || !borrowDate || !returnDate) {
     return res.status(400).json({
       message:
-        "Nama peminjam, nomor HP, tanggal pinjam, tanggal kembali, dan dokumen wajib diisi",
+        "Nama peminjam, nomor HP, tanggal pinjam, dan tanggal kembali wajib diisi",
+    });
+  }
+
+  // Untuk borrowing request, dokumen wajib ada
+  if (!req.file) {
+    return res.status(400).json({
+      message: "Dokumen wajib diupload untuk permintaan peminjaman",
+    });
+  }
+
+  // ✅ VALIDASI: Pastikan file adalah PDF
+  if (req.file.mimetype !== "application/pdf") {
+    return res.status(400).json({
+      message: "Dokumen harus berupa file PDF",
     });
   }
 
   const item = await Inventory.findById(id);
   if (!item) {
+    // ✅ CLEANUP: Hapus file jika item tidak ditemukan
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     return res.status(404).json({ message: "Barang tidak ditemukan" });
   }
 
   if (!item.isLendable) {
+    // ✅ CLEANUP: Hapus file jika tidak bisa dipinjam
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     return res.status(400).json({ message: "Barang tidak dapat dipinjam" });
   }
 
   // Check if item is available using virtual
   if (item.currentlyAvailable <= 0) {
+    // ✅ CLEANUP: Hapus file jika tidak tersedia
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     return res.status(400).json({ message: "Barang sedang tidak tersedia" });
   }
 
-  const borrowingData = {
-    borrowerName,
-    phoneNumber,
-    institution,
-    borrowDate: new Date(borrowDate),
-    returnDate: new Date(returnDate),
-    documentUrl,
-    notes,
-    status: "pending",
-  };
+  try {
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      resource_type: "raw", // ✅ PERBAIKAN: Gunakan "raw" untuk PDF, bukan "auto"
+      type: "upload", // ✅ PERBAIKAN: Eksplisit set type
+      access_mode: "public", // ✅ PERBAIKAN: Pastikan public access
+      folder: "borrowing-documents", // Folder khusus untuk dokumen peminjaman
+      use_filename: true, // Gunakan nama file asli
+      unique_filename: true, // Tambah suffix unik
+      // ✅ HAPUS upload_preset jika ada
+    });
 
-  item.borrowings.push(borrowingData);
-  await item.save();
+    documentUrl = result.secure_url;
+    documentPublicId = result.public_id;
 
-  // Get the newly added borrowing with its generated ID
-  const newBorrowing = item.borrowings[item.borrowings.length - 1];
+    // Hapus file temporary
+    fs.unlinkSync(req.file.path);
 
-  res.status(201).json({
-    message: "Permintaan peminjaman berhasil diajukan",
-    data: newBorrowing,
-  });
+    // Buat data peminjaman
+    const borrowingData = {
+      borrowerName,
+      phoneNumber,
+      institution,
+      borrowDate: new Date(borrowDate),
+      returnDate: new Date(returnDate),
+      documentUrl, // Menggunakan documentUrl yang sudah diupload
+      documentPublicId, // Simpan public_id untuk keperluan delete nanti
+      notes,
+      status: "pending",
+    };
+
+    // Tambahkan ke array borrowings
+    item.borrowings.push(borrowingData);
+    await item.save();
+
+    // Get the newly added borrowing with its generated ID
+    const newBorrowing = item.borrowings[item.borrowings.length - 1];
+
+    // ✅ TAMBAHAN: Return dengan informasi lengkap untuk debugging
+    res.status(201).json({
+      message: "Permintaan peminjaman berhasil diajukan",
+      data: {
+        ...newBorrowing.toObject(),
+        // Tambahan info untuk testing
+        testUrl: documentUrl, // Frontend bisa test URL ini
+        uploadInfo: {
+          resource_type: result.resource_type,
+          access_mode: result.access_mode,
+          type: result.type,
+        },
+      },
+    });
+  } catch (error) {
+    // ✅ PERBAIKAN: Cleanup yang lebih baik
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    // ✅ TAMBAHAN: Error response yang lebih informatif
+    res.status(500).json({
+      message: "Gagal mengupload dokumen",
+      error: error.message,
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
+  }
 });
 
 // APPROVE borrowing request

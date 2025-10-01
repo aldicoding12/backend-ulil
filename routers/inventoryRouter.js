@@ -47,8 +47,12 @@ router.patch("/:itemId/borrowings/:borrowingId/return", markAsReturned);
 // Get single item details
 router.get("/items/:id", getItemById);
 
-// Submit borrowing request
-router.post("/items/:id/borrow", submitBorrowingRequest);
+// Submit borrowing request - FIXED: Use document field name for file upload
+router.post(
+  "/items/:id/borrow",
+  upload.single("document"),
+  submitBorrowingRequest
+);
 
 // Get user's borrowing history
 router.get("/users/:phoneNumber/history", getUserBorrowingHistory);

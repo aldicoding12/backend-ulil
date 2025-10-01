@@ -26,14 +26,12 @@ export const createNews = asyncHandler(async (req, res) => {
 
   try {
     // Upload ke Cloudinary
-    console.log("Uploading to Cloudinary:", req.file.path);
     const result = await cloudinary.uploader.upload(req.file.path, {
       folder: "berita",
     });
 
     imageUrl = result.secure_url;
     imagePublicId = result.public_id;
-    console.log("Upload success:", { imageUrl, imagePublicId });
 
     // Hapus file temporary
     fs.unlinkSync(req.file.path);
@@ -46,29 +44,17 @@ export const createNews = asyncHandler(async (req, res) => {
       image: imageUrl,
       imagePublicId,
     });
-
-    console.log("News created:", newNews);
-    res.status(201).json({
-      message: "Berita berhasil dibuat",
-      data: newNews,
-    });
   } catch (error) {
     // Cleanup file jika ada error
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Create news error:", error);
     throw error;
   }
 });
 
 // UPDATE news by ID
 export const updateNews = asyncHandler(async (req, res) => {
-  console.log("=== UPDATE NEWS DEBUG ===");
-  console.log("Params:", req.params);
-  console.log("Body:", req.body);
-  console.log("File:", req.file);
-
   const { id } = req.params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid ID format" });
@@ -84,50 +70,27 @@ export const updateNews = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: "Berita tidak ditemukan" });
   }
 
-  console.log("Existing news:", {
-    id: existingNews._id,
-    title: existingNews.title,
-    hasImage: !!existingNews.image,
-    imagePublicId: existingNews.imagePublicId,
-  });
-
   try {
     // Jika ada file gambar baru
     if (req.file) {
-      console.log("Processing new image file:", req.file.path);
-
       // Hapus gambar lama dari Cloudinary jika ada
       if (existingNews.imagePublicId) {
-        console.log(
-          "Deleting old image from Cloudinary:",
-          existingNews.imagePublicId
-        );
         try {
           await cloudinary.uploader.destroy(existingNews.imagePublicId);
-          console.log("Old image deleted successfully");
-        } catch (deleteError) {
-          console.error("Error deleting old image:", deleteError);
-          // Lanjutkan proses meskipun gagal hapus gambar lama
-        }
+        } catch (deleteError) {}
       }
 
       // Upload gambar baru
-      console.log("Uploading new image to Cloudinary");
       const result = await cloudinary.uploader.upload(req.file.path, {
         folder: "masjid",
       });
 
       updateData.image = result.secure_url;
       updateData.imagePublicId = result.public_id;
-      console.log("New image uploaded:", {
-        imageUrl: updateData.image,
-        imagePublicId: updateData.imagePublicId,
-      });
 
       // Hapus file temporary
       fs.unlinkSync(req.file.path);
     } else {
-      console.log("No new image file, keeping existing image");
     }
 
     // Update data di database
@@ -135,13 +98,6 @@ export const updateNews = asyncHandler(async (req, res) => {
       new: true,
       runValidators: true,
     }).lean();
-
-    console.log("News updated successfully:", {
-      id: updated._id,
-      title: updated.title,
-      hasImage: !!updated.image,
-      imageUrl: updated.image,
-    });
 
     res.status(200).json({
       message: "Berita berhasil diperbarui",
@@ -152,7 +108,6 @@ export const updateNews = asyncHandler(async (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Update news error:", error);
     throw error;
   }
 });
@@ -171,9 +126,7 @@ export const deleteNews = asyncHandler(async (req, res) => {
   if (news.imagePublicId) {
     try {
       await cloudinary.uploader.destroy(news.imagePublicId);
-      console.log("Image deleted from Cloudinary:", news.imagePublicId);
     } catch (error) {
-      console.error("Error deleting image from Cloudinary:", error);
       // Lanjutkan menghapus data meskipun gagal hapus gambar
     }
   }
@@ -229,4 +182,99 @@ export const getNewsById = asyncHandler(async (req, res) => {
   if (!news) return res.status(404).json({ message: "Berita tidak ditemukan" });
 
   res.status(200).json({ message: "Berhasil menampilkan berita", data: news });
+});
+
+/////////////////
+export const getNewsStats = asyncHandler(async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+
+    // Total news
+    const totalNews = await News.countDocuments();
+
+    // Published news
+    const publishedNews = await News.countDocuments({
+      status: "published",
+    });
+
+    // Draft news
+    const draftNews = await News.countDocuments({
+      status: "draft",
+    });
+
+    // Total views (asumsi ada field views di News model)
+    const viewsAgg = await News.aggregate([
+      { $group: { _id: null, total: { $sum: "$views" } } },
+    ]);
+    const totalViews = viewsAgg[0]?.total || 0;
+
+    // Views today (asumsi ada array viewHistory dengan tanggal)
+    const todayViewsAgg = await News.aggregate([
+      { $unwind: "$viewHistory" },
+      {
+        $match: {
+          "viewHistory.date": { $gte: startOfDay },
+        },
+      },
+      { $group: { _id: null, total: { $sum: 1 } } },
+    ]);
+    const todayViews = todayViewsAgg[0]?.total || 0;
+
+    // Calculate views growth (compare dengan bulan lalu)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    const lastMonthViewsAgg = await News.aggregate([
+      { $unwind: "$viewHistory" },
+      {
+        $match: {
+          "viewHistory.date": { $gte: lastMonthStart, $lte: lastMonthEnd },
+        },
+      },
+      { $group: { _id: null, total: { $sum: 1 } } },
+    ]);
+    const lastMonthViews = lastMonthViewsAgg[0]?.total || 0;
+
+    const thisMonthViewsAgg = await News.aggregate([
+      { $unwind: "$viewHistory" },
+      {
+        $match: {
+          "viewHistory.date": { $gte: startOfMonth },
+        },
+      },
+      { $group: { _id: null, total: { $sum: 1 } } },
+    ]);
+    const thisMonthViews = thisMonthViewsAgg[0]?.total || 0;
+
+    const viewsGrowth =
+      lastMonthViews > 0
+        ? (((thisMonthViews - lastMonthViews) / lastMonthViews) * 100).toFixed(
+            1
+          )
+        : 100;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalNews,
+        publishedNews,
+        draftNews,
+        totalViews,
+        todayViews,
+        viewsGrowth: parseFloat(viewsGrowth),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching news statistics",
+      error: error.message,
+    });
+  }
 });

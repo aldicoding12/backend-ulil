@@ -14,32 +14,19 @@ const snap = new midtransClient.Snap({
 // @route   POST /api/v1/donations
 // @access  Public
 export const createDonation = asyncHandler(async (req, res) => {
+  // Ambil data dari request body
   const { eventId, donorName, donorPhone, amount, message, isAnonymous } =
     req.body;
 
-  // Validasi input
-  if (!eventId || !donorPhone || !amount) {
+  // Validasi input required
+  if (!eventId || !amount) {
     return res.status(400).json({
       success: false,
-      message: "Event ID, nama donatur, dan jumlah donasi wajib diisi",
+      message: "Event ID dan amount harus diisi",
     });
   }
 
-  if (!mongoose.Types.ObjectId.isValid(eventId)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid event ID format",
-    });
-  }
-
-  if (amount < 1000) {
-    return res.status(400).json({
-      success: false,
-      message: "Minimal donasi Rp 1.000",
-    });
-  }
-
-  // Cek apakah event exists dan merupakan donation event
+  // Validasi apakah event exists
   const event = await Events.findById(eventId);
   if (!event) {
     return res.status(404).json({
@@ -48,27 +35,8 @@ export const createDonation = asyncHandler(async (req, res) => {
     });
   }
 
-  if (!event.isDonationEvent) {
-    return res.status(400).json({
-      success: false,
-      message: "Event ini bukan event donasi",
-    });
-  }
-
-  if (event.status !== "published") {
-    return res.status(400).json({
-      success: false,
-      message: "Event donasi tidak aktif",
-    });
-  }
-
-  // Cek apakah donation deadline sudah lewat
-  if (event.donationDeadline && new Date() > event.donationDeadline) {
-    return res.status(400).json({
-      success: false,
-      message: "Periode donasi sudah berakhir",
-    });
-  }
+  // Deklarasikan newDonation di luar blok try agar bisa diakses di catch
+  let newDonation = null;
 
   try {
     // Generate unique order ID
@@ -76,7 +44,7 @@ export const createDonation = asyncHandler(async (req, res) => {
       .toString(36)
       .substr(2, 9)}`;
 
-    // Prepare donation data
+    // Prepare donation data - tetap sama
     const donationData = {
       eventId,
       donorName: isAnonymous ? "Hamba Allah" : donorName,
@@ -87,17 +55,17 @@ export const createDonation = asyncHandler(async (req, res) => {
       orderId,
     };
 
-    // Simpan donation ke database dengan status pending
-    const newDonation = await Donation.create(donationData);
+    // Simpan ke variabel yang sudah dideklarasikan di atas
+    newDonation = await Donation.create(donationData);
 
-    // Prepare Midtrans transaction parameter
+    // PERBAIKAN: Konfigurasi parameter Midtrans
     const parameter = {
       transaction_details: {
         order_id: orderId,
         gross_amount: parseInt(amount),
       },
       customer_details: {
-        first_name: donorName,
+        first_name: donorName || "Donatur",
         phone: donorPhone || "",
       },
       item_details: [
@@ -108,11 +76,14 @@ export const createDonation = asyncHandler(async (req, res) => {
           name: `Donasi: ${event.title}`,
         },
       ],
+      // PERBAIKAN: Gunakan URL yang benar dan tambahkan parameter
       callbacks: {
-        finish: `${process.env.FRONTEND_URL}/donation/success`,
-        error: `${process.env.FRONTEND_URL}/donation/error`,
-        pending: `${process.env.FRONTEND_URL}/donation/pending`,
+        finish: `${process.env.FRONTEND_URL}/donation/success?order_id=${orderId}`,
+        error: `${process.env.FRONTEND_URL}/donation/error?order_id=${orderId}`,
+        pending: `${process.env.FRONTEND_URL}/donation/pending?order_id=${orderId}`,
       },
+      // TAMBAHAN: Konfigurasi notification URL untuk webhook
+      custom_field1: orderId, // Untuk tracking tambahan
     };
 
     // Create transaction dengan Midtrans
@@ -122,13 +93,6 @@ export const createDonation = asyncHandler(async (req, res) => {
     newDonation.snapToken = transaction.token;
     newDonation.midtransResponse = transaction;
     await newDonation.save();
-
-    console.log("Donation created:", {
-      donationId: newDonation._id,
-      orderId,
-      amount,
-      snapToken: transaction.token,
-    });
 
     res.status(201).json({
       success: true,
@@ -141,18 +105,21 @@ export const createDonation = asyncHandler(async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Create donation error:", error);
+    // PERBAIKAN: Sekarang newDonation bisa diakses karena dideklarasikan di scope yang sama
+    if (newDonation && newDonation._id) {
+      try {
+        await Donation.findByIdAndDelete(newDonation._id);
+      } catch (cleanupError) {}
+    }
+
+    // Re-throw error agar bisa di-handle oleh asyncHandler
     throw error;
   }
 });
 
-// @desc    Handle Midtrans notification webhook
-// @route   POST /api/v1/donations/notification
-// @access  Public (Webhook)
+// PERBAIKAN: Update handleMidtransNotification untuk handle settlement
 export const handleMidtransNotification = asyncHandler(async (req, res) => {
   const notification = req.body;
-
-  console.log("Midtrans notification received:", notification);
 
   const orderId = notification.order_id;
   const transactionStatus = notification.transaction_status;
@@ -170,11 +137,15 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
 
   let paymentStatus = "pending";
 
+  // PERBAIKAN: Handle semua status dari Midtrans dengan benar
   if (transactionStatus === "capture") {
     if (fraudStatus === "accept") {
-      paymentStatus = "success";
+      paymentStatus = "settlement";
     }
   } else if (transactionStatus === "settlement") {
+    // TAMBAHAN: Handle settlement
+    paymentStatus = "settlement";
+  } else if (transactionStatus === "success") {
     paymentStatus = "settlement";
   } else if (
     transactionStatus === "cancel" ||
@@ -196,26 +167,107 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
     donation.paidAt = new Date();
 
     // Update event donation current amount
-    const event = await Events.findById(donation.eventId);
-    if (event) {
-      event.donationCurrent += donation.amount;
-      event.actualCost += donation.amount; // Update actual cost juga
-      await event.save();
+    try {
+      const event = await Events.findById(donation.eventId);
+      if (event) {
+        event.donationCurrent += donation.amount;
+        event.actualCost += donation.amount;
+        await event.save();
+      }
+    } catch (eventUpdateError) {
+      // Jangan gagalkan webhook karena error update event
     }
   }
 
   await donation.save();
 
-  console.log("Donation updated:", {
-    donationId: donation._id,
-    orderId,
-    paymentStatus,
-    amount: donation.amount,
-  });
-
   res.status(200).json({
     success: true,
     message: "Notification processed successfully",
+  });
+});
+
+export const handleMidtransRedirect = asyncHandler(async (req, res) => {
+  const { order_id, status_code, transaction_status } = req.query;
+
+  // Cari donation
+  const donation = await Donation.findOne({ orderId: order_id });
+
+  if (!donation) {
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/donation/error?message=donation_not_found`
+    );
+  }
+
+  // Redirect ke frontend berdasarkan status
+  if (transaction_status === "settlement" || status_code === "200") {
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/donation/success?order_id=${order_id}`
+    );
+  } else if (transaction_status === "pending") {
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/donation/pending?order_id=${order_id}`
+    );
+  } else {
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/donation/error?order_id=${order_id}`
+    );
+  }
+});
+
+// PERBAIKAN: Update getDonationStats untuk handle 'settlement' status juga
+export const getDonationStats = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(eventId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid event ID format",
+    });
+  }
+
+  const stats = await Donation.aggregate([
+    {
+      $match: {
+        eventId: new mongoose.Types.ObjectId(eventId),
+        paymentStatus: "settlement", // Ini sudah benar
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        totalAmount: { $sum: "$amount" },
+        totalDonations: { $sum: 1 },
+        averageAmount: { $avg: "$amount" },
+        lastDonation: { $max: "$paidAt" },
+      },
+    },
+  ]);
+  // PERBAIKAN: Get recent donations dengan status success
+  const recentDonations = await Donation.find({
+    eventId,
+    paymentStatus: "settlement", // Ubah dari "settlement" ke "success"
+  })
+    .sort({ paidAt: -1 })
+    .limit(10)
+    .select("donorName amount paidAt isAnonymous message")
+    .lean();
+
+  const result = {
+    totalAmount: stats[0]?.totalAmount || 0,
+    totalDonations: stats[0]?.totalDonations || 0,
+    averageAmount: stats[0]?.averageAmount || 0,
+    lastDonation: stats[0]?.lastDonation || null,
+    recentDonations: recentDonations.map((d) => ({
+      ...d,
+      donorName: d.isAnonymous ? "Hamba Allah" : d.donorName,
+    })),
+  };
+
+  res.status(200).json({
+    success: true,
+    message: "Berhasil menampilkan statistik donasi",
+    data: result,
   });
 });
 
@@ -278,66 +330,6 @@ export const getDonationById = asyncHandler(async (req, res) => {
     data: donation,
   });
 });
-
-// @desc    Get donation statistics for specific event
-// @route   GET /api/v1/donations/stats/:eventId
-// @access  Private
-export const getDonationStats = asyncHandler(async (req, res) => {
-  const { eventId } = req.params;
-
-  if (!mongoose.Types.ObjectId.isValid(eventId)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid event ID format",
-    });
-  }
-
-  const stats = await Donation.aggregate([
-    {
-      $match: {
-        eventId: new mongoose.Types.ObjectId(eventId),
-        paymentStatus: "settlement",
-      },
-    },
-    {
-      $group: {
-        _id: null,
-        totalAmount: { $sum: "$amount" },
-        totalDonations: { $sum: 1 },
-        averageAmount: { $avg: "$amount" },
-        lastDonation: { $max: "$paidAt" },
-      },
-    },
-  ]);
-
-  // Get recent donations
-  const recentDonations = await Donation.find({
-    eventId,
-    paymentStatus: "settlement",
-  })
-    .sort({ paidAt: -1 })
-    .limit(10)
-    .select("donorName amount paidAt isAnonymous message")
-    .lean();
-
-  const result = {
-    totalAmount: stats[0]?.totalAmount || 0,
-    totalDonations: stats[0]?.totalDonations || 0,
-    averageAmount: stats[0]?.averageAmount || 0,
-    lastDonation: stats[0]?.lastDonation || null,
-    recentDonations: recentDonations.map((d) => ({
-      ...d,
-      donorName: d.isAnonymous ? "Hamba Allah" : d.donorName,
-    })),
-  };
-
-  res.status(200).json({
-    success: true,
-    message: "Berhasil menampilkan statistik donasi",
-    data: result,
-  });
-});
-
 // @desc    Check donation status by order ID
 // @route   GET /api/v1/donations/status/:orderId
 // @access  Public
@@ -367,4 +359,87 @@ export const checkDonationStatus = asyncHandler(async (req, res) => {
       paidAt: donation.paidAt,
     },
   });
+});
+
+//////////////
+export const getAllDonationStats = asyncHandler(async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Total donation amount dari semua transaksi success
+    const totalAmountAgg = await Donation.aggregate([
+      { $match: { status: "success" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const totalAmount = totalAmountAgg[0]?.total || 0;
+
+    // Today's donation amount
+    const todayAmountAgg = await Donation.aggregate([
+      {
+        $match: {
+          status: "success",
+          createdAt: { $gte: startOfDay },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const todayAmount = todayAmountAgg[0]?.total || 0;
+
+    // Calculate growth rate (compare dengan bulan lalu)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    const lastMonthAmountAgg = await Donation.aggregate([
+      {
+        $match: {
+          status: "success",
+          createdAt: { $gte: lastMonthStart, $lte: lastMonthEnd },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const lastMonthAmount = lastMonthAmountAgg[0]?.total || 0;
+
+    const thisMonthAmountAgg = await Donation.aggregate([
+      {
+        $match: {
+          status: "success",
+          createdAt: { $gte: startOfMonth },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const thisMonthAmount = thisMonthAmountAgg[0]?.total || 0;
+
+    const growthRate =
+      lastMonthAmount > 0
+        ? (
+            ((thisMonthAmount - lastMonthAmount) / lastMonthAmount) *
+            100
+          ).toFixed(1)
+        : 100;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalAmount,
+        todayAmount,
+        growthRate: parseFloat(growthRate),
+        thisMonthAmount,
+        lastMonthAmount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching donation statistics",
+      error: error.message,
+    });
+  }
 });

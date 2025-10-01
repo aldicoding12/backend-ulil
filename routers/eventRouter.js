@@ -23,6 +23,10 @@ import {
   getActiveDonationEvents,
   getDonationId,
   getDonationEvents,
+  getDonorsByEventId,
+  getDonationStatistics,
+  updateDonorStatus,
+  getDonationEventDetails,
 } from "../controllers/eventController.js";
 import { upload } from "../middlewares/upload.js";
 import { pengurus, jamaah } from "../middlewares/authMiddleware.js";
@@ -68,5 +72,18 @@ router.put("/:id/status", updateEventStatus);
 router.get("/:id", getEvent);
 router.put("/:id", upload.single("image"), updateEvent);
 router.delete("/:id", deleteEvent);
+
+///////////////////////
+// Get donors by event ID
+router.get("/donations/donors/:eventId", getDonorsByEventId);
+
+// Get donation statistics by event ID
+router.get("/donations/:eventId/statistics", getDonationStatistics);
+
+// Update donor status
+router.put("/donations/donor/:donorId/status", updateDonorStatus);
+
+// Get donation event details with aggregated data
+router.get("/donations/:eventId/details", getDonationEventDetails);
 
 export default router;

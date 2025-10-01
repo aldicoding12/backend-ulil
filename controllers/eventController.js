@@ -198,9 +198,7 @@ export const updateEvent = asyncHandler(async (req, res) => {
       if (existingEvent.imagePublicId) {
         try {
           await cloudinary.uploader.destroy(existingEvent.imagePublicId);
-        } catch (deleteError) {
-          console.error("Error deleting old image:", deleteError);
-        }
+        } catch (deleteError) {}
       }
 
       // Upload gambar baru
@@ -297,9 +295,7 @@ export const deleteEvent = asyncHandler(async (req, res) => {
   if (event.imagePublicId) {
     try {
       await cloudinary.uploader.destroy(event.imagePublicId);
-    } catch (error) {
-      console.error("Error deleting image from Cloudinary:", error);
-    }
+    } catch (error) {}
   }
 
   await Events.findByIdAndDelete(req.params.id);
@@ -762,7 +758,6 @@ export const createDonationEvent = asyncHandler(async (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Create donation event error:", error);
     throw error;
   }
 });
@@ -915,9 +910,7 @@ export const updateDonationEvent = asyncHandler(async (req, res) => {
       if (existingEvent.imagePublicId) {
         try {
           await cloudinary.uploader.destroy(existingEvent.imagePublicId);
-        } catch (deleteError) {
-          console.error("Error deleting old image:", deleteError);
-        }
+        } catch (deleteError) {}
       }
 
       // Upload gambar baru
@@ -948,7 +941,6 @@ export const updateDonationEvent = asyncHandler(async (req, res) => {
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    console.error("Update donation event error:", error);
     throw error;
   }
 });
@@ -995,17 +987,13 @@ export const deleteDonationEvent = asyncHandler(async (req, res) => {
         message: "Tidak dapat menghapus event yang sudah memiliki donasi",
       });
     }
-  } catch (error) {
-    console.log("Donation model not found, proceeding with delete");
-  }
+  } catch (error) {}
 
   // Hapus gambar dari Cloudinary
   if (event.imagePublicId) {
     try {
       await cloudinary.uploader.destroy(event.imagePublicId);
-    } catch (error) {
-      console.error("Error deleting image from Cloudinary:", error);
-    }
+    } catch (error) {}
   }
 
   // Hapus dokumen dari MongoDB
@@ -1015,4 +1003,319 @@ export const deleteDonationEvent = asyncHandler(async (req, res) => {
     success: true,
     message: "Event donasi berhasil dihapus",
   });
+});
+
+// Tambahkan fungsi ini ke file controller donation Anda
+
+// @desc    Get donors by donation event ID
+// @route   GET /api/events/donations/donors/:eventId
+// @access  Private/Admin
+export const getDonorsByEventId = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+
+  // Validasi ObjectId
+  if (!mongoose.Types.ObjectId.isValid(eventId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid event ID format",
+    });
+  }
+
+  try {
+    // Cek apakah event donasi exists
+    const donationEvent = await Events.findById(eventId);
+    if (!donationEvent) {
+      return res.status(404).json({
+        success: false,
+        message: "Event donasi tidak ditemukan",
+      });
+    }
+
+    if (!donationEvent.isDonationEvent) {
+      return res.status(400).json({
+        success: false,
+        message: "Event ini bukan event donasi",
+      });
+    }
+
+    // Import model Donation (adjust path sesuai struktur Anda)
+    const Donation = (await import("../models/donationModel.js")).default;
+
+    // Ambil semua donasi untuk event ini yang statusnya settlement (berhasil)
+    const donors = await Donation.find({
+      eventId: eventId,
+      paymentStatus: "settlement", // hanya yang sudah berhasil bayar
+    })
+      // PERBAIKAN: Gunakan field yang sesuai dengan model schema
+      .select(
+        "donorName donorPhone address amount message isAnonymous donatedAt paymentStatus"
+      )
+      .sort({ donatedAt: -1 }) // urutkan dari yang terbaru
+      .lean();
+
+    // PERBAIKAN: Transform data untuk memastikan field yang benar
+    const transformedDonors = donors.map((donor) => ({
+      _id: donor._id,
+      donorName: donor.isAnonymous
+        ? "Hamba Allah"
+        : donor.donorName || "Anonim",
+      phone: donor.donorPhone,
+      address: donor.address || "",
+      amount: donor.amount || 0,
+      message: donor.message || "",
+      donatedAt: donor.donatedAt,
+      isAnonymous: donor.isAnonymous || false,
+    }));
+
+    // Hitung statistik
+    const totalDonors = transformedDonors.length;
+    const totalAmount = transformedDonors.reduce(
+      (sum, donor) => sum + (donor.amount || 0),
+      0
+    );
+    const averageAmount =
+      totalDonors > 0 ? Math.round(totalAmount / totalDonors) : 0;
+
+    res.status(200).json({
+      success: true,
+      message: "Data donor berhasil diambil",
+      data: transformedDonors, // Kirim data yang sudah di-transform
+      statistics: {
+        totalDonors,
+        totalAmount,
+        averageAmount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat mengambil data donor",
+      error: error.message,
+    });
+  }
+});
+
+// @desc    Get donation statistics by event ID
+// @route   GET /api/events/donations/:eventId/statistics
+// @access  Private/Admin
+// @desc    Get donation statistics by event ID
+// @route   GET /api/events/donations/:eventId/statistics
+// @access  Private/Admin
+export const getDonationStatistics = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+
+  // Validasi ObjectId
+  if (!mongoose.Types.ObjectId.isValid(eventId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid event ID format",
+    });
+  }
+
+  try {
+    // Import model Donation
+    const Donation = (await import("../models/donationModel.js")).default;
+
+    // Aggregate statistics
+    const statistics = await Donation.aggregate([
+      {
+        $match: {
+          eventId: new mongoose.Types.ObjectId(eventId),
+          paymentStatus: "settlement",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalDonors: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+          averageAmount: { $avg: "$amount" },
+          maxAmount: { $max: "$amount" },
+          minAmount: { $min: "$amount" },
+        },
+      },
+    ]);
+
+    const stats =
+      statistics.length > 0
+        ? statistics[0]
+        : {
+            totalDonors: 0,
+            totalAmount: 0,
+            averageAmount: 0,
+            maxAmount: 0,
+            minAmount: 0,
+          };
+
+    // Get recent donors (5 terakhir) - PERBAIKAN: Gunakan field yang benar
+    const recentDonors = await Donation.find({
+      eventId: eventId,
+      paymentStatus: "settlement",
+    })
+      .select("donorName donorPhone amount donatedAt isAnonymous")
+      .sort({ donatedAt: -1 })
+      .limit(5)
+      .lean();
+
+    // Transform recent donors data
+    const transformedRecentDonors = recentDonors.map((donor) => ({
+      _id: donor._id,
+      name: donor.isAnonymous ? "Hamba Allah" : donor.donorName || "Anonim",
+      phone: donor.donorPhone,
+      amount: donor.amount,
+      donatedAt: donor.donatedAt,
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        statistics: stats,
+        recentDonors: transformedRecentDonors,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat mengambil statistik donasi",
+      error: error.message,
+    });
+  }
+});
+
+// @desc    Update donor status (untuk admin approval jika diperlukan)
+// @route   PUT /api/events/donations/donor/:donorId/status
+// @access  Private/Admin
+export const updateDonorStatus = asyncHandler(async (req, res) => {
+  const { donorId } = req.params;
+  const { status, adminNote } = req.body;
+
+  // Validasi ObjectId
+  if (!mongoose.Types.ObjectId.isValid(donorId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid donor ID format",
+    });
+  }
+
+  // Validasi status
+  const validStatuses = ["pending", "settlement", "expire", "cancel", "deny"];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Status tidak valid",
+    });
+  }
+
+  try {
+    // Import model Donation
+    const Donation = (await import("../models/donationModel.js")).default;
+
+    const donor = await Donation.findByIdAndUpdate(
+      donorId,
+      {
+        paymentStatus: status,
+        adminNote: adminNote || null,
+        updatedAt: new Date(),
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
+
+    if (!donor) {
+      return res.status(404).json({
+        success: false,
+        message: "Data donor tidak ditemukan",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Status donor berhasil diperbarui",
+      data: donor,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat memperbarui status donor",
+      error: error.message,
+    });
+  }
+});
+
+// @desc    Get donation event with aggregated donor data
+// @route   GET /api/events/donations/:eventId/details
+// @access  Private/Admin
+export const getDonationEventDetails = asyncHandler(async (req, res) => {
+  const { eventId } = req.params;
+
+  // Validasi ObjectId
+  if (!mongoose.Types.ObjectId.isValid(eventId)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid event ID format",
+    });
+  }
+
+  try {
+    // Get event details
+    const event = await Events.findById(eventId);
+    if (!event || !event.isDonationEvent) {
+      return res.status(404).json({
+        success: false,
+        message: "Event donasi tidak ditemukan",
+      });
+    }
+
+    // Import model Donation
+    const Donation = (await import("../models/donationModel.js")).default;
+
+    // Get aggregated data
+    const aggregation = await Donation.aggregate([
+      {
+        $match: {
+          eventId: new mongoose.Types.ObjectId(eventId),
+        },
+      },
+      {
+        $group: {
+          _id: "$paymentStatus",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    // Calculate current donation amount
+    const settlementData = aggregation.find(
+      (item) => item._id === "settlement"
+    );
+    const donationCurrent = settlementData ? settlementData.totalAmount : 0;
+    const donorCount = settlementData ? settlementData.count : 0;
+
+    // Update event dengan data terkini
+    await Events.findByIdAndUpdate(eventId, {
+      donationCurrent,
+      donorCount,
+    });
+
+    const eventWithStats = {
+      ...event.toObject(),
+      donationCurrent,
+      donorCount,
+      donationStats: aggregation,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: eventWithStats,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat mengambil detail event donasi",
+      error: error.message,
+    });
+  }
 });

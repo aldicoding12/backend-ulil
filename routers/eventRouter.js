@@ -28,7 +28,7 @@ import {
   updateDonorStatus,
   getDonationEventDetails,
 } from "../controllers/eventController.js";
-import { upload } from "../middlewares/upload.js";
+import upload from "../middlewares/upload.js";
 import { pengurus, jamaah } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();

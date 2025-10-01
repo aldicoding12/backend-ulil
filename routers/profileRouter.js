@@ -5,7 +5,7 @@ import {
   updateProfile,
   deleteProfile,
 } from "../controllers/profileController.js";
-import { upload } from "../middlewares/upload.js";
+import upload from "../middlewares/upload.js";
 import { jamaah, pengurus } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();

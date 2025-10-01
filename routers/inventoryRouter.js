@@ -14,7 +14,7 @@ import {
   getUserBorrowingHistory,
   getDashboardStats,
 } from "../controllers/inventoryController.js";
-import { upload } from "../middlewares/upload.js";
+import upload from "../middlewares/upload.js";
 import { jamaah, pengurus } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();

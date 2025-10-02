@@ -9,7 +9,23 @@ const app = express();
 // CORS
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: function (origin, callback) {
+      const allowed = [
+        "http://localhost:5173",
+        "https://frontend-ulil.vercel.app",
+      ];
+
+      // Izinkan semua deployment preview dari Vercel
+      if (
+        !origin ||
+        allowed.includes(origin) ||
+        /frontend-ulil.*\.vercel\.app$/.test(origin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
   })
 );

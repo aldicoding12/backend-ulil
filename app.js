@@ -6,29 +6,36 @@ import dotenv from "dotenv";
 dotenv.config();
 const app = express();
 
-// CORS
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      const allowed = [
-        "http://localhost:5173",
-        "https://frontend-ulil.vercel.app",
-      ];
+// CORS Configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowed = [
+      "http://localhost:5173",
+      "https://frontend-ulil.vercel.app",
+    ];
 
-      // Izinkan semua deployment preview dari Vercel
-      if (
-        !origin ||
-        allowed.includes(origin) ||
-        /frontend-ulil.*\.vercel\.app$/.test(origin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-  })
-);
+    // Izinkan semua deployment preview dari Vercel
+    if (
+      !origin ||
+      allowed.includes(origin) ||
+      /frontend-ulil.*\.vercel\.app$/.test(origin)
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ Tambahkan ini
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie"], // ✅ Tambahkan ini
+  exposedHeaders: ["Set-Cookie"], // ✅ Tambahkan ini jika pakai cookie
+};
+
+app.use(cors(corsOptions));
+
+// ✅ TAMBAHKAN: Handle preflight requests untuk semua routes
+app.options("*", cors(corsOptions));
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));

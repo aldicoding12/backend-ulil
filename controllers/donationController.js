@@ -6,9 +6,19 @@ import midtransClient from "midtrans-client";
 
 // Konfigurasi Midtrans
 const snap = new midtransClient.Snap({
-  isProduction: process.env.NODE_ENV === "false",
+  isProduction: process.env.NODE_ENV === "production",
   serverKey: process.env.MIDTRANS_SERVER_KEY,
 });
+
+// Fungsi untuk verifikasi signature
+const verifySignature = (data) => {
+  const { order_id, status_code, gross_amount, server_key } = data;
+  const hash = crypto
+    .createHash("sha512")
+    .update(`${order_id}${status_code}${gross_amount}${server_key}`)
+    .digest("hex");
+  return hash === data.signature_key;
+};
 
 // @desc    Create donation transaction
 // @route   POST /api/v1/donations
@@ -121,6 +131,29 @@ export const createDonation = asyncHandler(async (req, res) => {
 export const handleMidtransNotification = asyncHandler(async (req, res) => {
   const notification = req.body;
 
+  console.log("📨 Received Midtrans Notification:", {
+    orderId: notification.order_id,
+    transactionStatus: notification.transaction_status,
+    fraudStatus: notification.fraud_status,
+  });
+
+  // Verifikasi signature untuk keamanan
+  const isValidSignature = verifySignature({
+    order_id: notification.order_id,
+    status_code: notification.status_code,
+    gross_amount: notification.gross_amount,
+    server_key: process.env.MIDTRANS_SERVER_KEY,
+    signature_key: notification.signature_key,
+  });
+
+  if (!isValidSignature) {
+    console.error("❌ Invalid signature");
+    return res.status(403).json({
+      success: false,
+      message: "Invalid signature",
+    });
+  }
+
   const orderId = notification.order_id;
   const transactionStatus = notification.transaction_status;
   const fraudStatus = notification.fraud_status;
@@ -129,6 +162,7 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
   // Cari donation berdasarkan order ID
   const donation = await Donation.findOne({ orderId });
   if (!donation) {
+    console.error("❌ Donation not found:", orderId);
     return res.status(404).json({
       success: false,
       message: "Donation not found",
@@ -137,13 +171,16 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
 
   let paymentStatus = "pending";
 
-  // PERBAIKAN: Handle semua status dari Midtrans dengan benar
+  // Handle semua status dari Midtrans
   if (transactionStatus === "capture") {
     if (fraudStatus === "accept") {
       paymentStatus = "settlement";
+    } else if (fraudStatus === "challenge") {
+      paymentStatus = "challenge";
+    } else {
+      paymentStatus = "deny";
     }
   } else if (transactionStatus === "settlement") {
-    // TAMBAHAN: Handle settlement
     paymentStatus = "settlement";
   } else if (transactionStatus === "success") {
     paymentStatus = "settlement";
@@ -157,14 +194,19 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
     paymentStatus = "pending";
   }
 
+  console.log(`🔄 Updating donation ${orderId} to status: ${paymentStatus}`);
+
   // Update donation status
   donation.paymentStatus = paymentStatus;
   donation.transactionId = notification.transaction_id;
   donation.paymentType = paymentType;
   donation.midtransResponse = notification;
 
+  // Jika pembayaran berhasil (settlement)
   if (paymentStatus === "settlement") {
     donation.paidAt = new Date();
+
+    console.log(`✅ Payment SUCCESS for ${orderId}`);
 
     // Update event donation current amount
     try {
@@ -173,14 +215,19 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
         event.donationCurrent += donation.amount;
         event.actualCost += donation.amount;
         await event.save();
+        console.log(`💰 Updated event ${event.title}: +${donation.amount}`);
       }
     } catch (eventUpdateError) {
+      console.error("Error updating event:", eventUpdateError);
       // Jangan gagalkan webhook karena error update event
     }
   }
 
   await donation.save();
 
+  console.log(`✅ Donation ${orderId} updated successfully`);
+
+  // PENTING: Selalu return 200 ke Midtrans
   res.status(200).json({
     success: true,
     message: "Notification processed successfully",
@@ -372,9 +419,9 @@ export const getAllDonationStats = asyncHandler(async (req, res) => {
     );
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    // Total donation amount dari semua transaksi success
+    // Total donation amount dari semua transaksi settlement
     const totalAmountAgg = await Donation.aggregate([
-      { $match: { status: "success" } },
+      { $match: { paymentStatus: "settlement" } }, // FIX: ganti status jadi paymentStatus
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
     const totalAmount = totalAmountAgg[0]?.total || 0;
@@ -383,7 +430,7 @@ export const getAllDonationStats = asyncHandler(async (req, res) => {
     const todayAmountAgg = await Donation.aggregate([
       {
         $match: {
-          status: "success",
+          paymentStatus: "settlement", // FIX
           createdAt: { $gte: startOfDay },
         },
       },
@@ -391,14 +438,14 @@ export const getAllDonationStats = asyncHandler(async (req, res) => {
     ]);
     const todayAmount = todayAmountAgg[0]?.total || 0;
 
-    // Calculate growth rate (compare dengan bulan lalu)
+    // Calculate growth rate
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
 
     const lastMonthAmountAgg = await Donation.aggregate([
       {
         $match: {
-          status: "success",
+          paymentStatus: "settlement", // FIX
           createdAt: { $gte: lastMonthStart, $lte: lastMonthEnd },
         },
       },
@@ -409,7 +456,7 @@ export const getAllDonationStats = asyncHandler(async (req, res) => {
     const thisMonthAmountAgg = await Donation.aggregate([
       {
         $match: {
-          status: "success",
+          paymentStatus: "settlement", // FIX
           createdAt: { $gte: startOfMonth },
         },
       },

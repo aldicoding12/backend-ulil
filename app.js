@@ -51,6 +51,7 @@ import contactRouter from "./routers/contactRouter.js";
 import inventoryRouter from "./routers/inventoryRouter.js";
 import profileRouter from "./routers/profileRouter.js";
 import activityRoutes from "./routers/activityRoutes.js";
+import galeriRouter from "./routers/galeriRouter.js";
 
 app.use("/api/ul/data/user", authRouter);
 app.use("/api/ul/data/news", newsRoute);
@@ -61,6 +62,7 @@ app.use("/api/ul/data/contact", contactRouter);
 app.use("/api/ul/data/inventory", inventoryRouter);
 app.use("/api/ul/data/profile", profileRouter);
 app.use("/api/ul/data/activities", activityRoutes);
+app.use("/api/ul/data/galeri", galeriRouter);
 
 // Health check endpoint
 app.get("/", (req, res) => {

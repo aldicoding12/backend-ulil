@@ -131,107 +131,126 @@ export const createDonation = asyncHandler(async (req, res) => {
 export const handleMidtransNotification = asyncHandler(async (req, res) => {
   const notification = req.body;
 
-  console.log("📨 Received Midtrans Notification:", {
-    orderId: notification.order_id,
-    transactionStatus: notification.transaction_status,
-    fraudStatus: notification.fraud_status,
-  });
+  console.log("📨 ========= MIDTRANS NOTIFICATION RECEIVED =========");
+  console.log("📨 Full Body:", JSON.stringify(notification, null, 2));
+  console.log("📨 Headers:", JSON.stringify(req.headers, null, 2));
 
-  // Verifikasi signature untuk keamanan
-  const isValidSignature = verifySignature({
-    order_id: notification.order_id,
-    status_code: notification.status_code,
-    gross_amount: notification.gross_amount,
-    server_key: process.env.MIDTRANS_SERVER_KEY,
-    signature_key: notification.signature_key,
-  });
-
-  if (!isValidSignature) {
-    console.error("❌ Invalid signature");
-    return res.status(403).json({
-      success: false,
-      message: "Invalid signature",
-    });
-  }
-
-  const orderId = notification.order_id;
-  const transactionStatus = notification.transaction_status;
-  const fraudStatus = notification.fraud_status;
-  const paymentType = notification.payment_type;
-
-  // Cari donation berdasarkan order ID
-  const donation = await Donation.findOne({ orderId });
-  if (!donation) {
-    console.error("❌ Donation not found:", orderId);
-    return res.status(404).json({
-      success: false,
-      message: "Donation not found",
-    });
-  }
-
-  let paymentStatus = "pending";
-
-  // Handle semua status dari Midtrans
-  if (transactionStatus === "capture") {
-    if (fraudStatus === "accept") {
-      paymentStatus = "settlement";
-    } else if (fraudStatus === "challenge") {
-      paymentStatus = "challenge";
-    } else {
-      paymentStatus = "deny";
-    }
-  } else if (transactionStatus === "settlement") {
-    paymentStatus = "settlement";
-  } else if (transactionStatus === "success") {
-    paymentStatus = "settlement";
-  } else if (
-    transactionStatus === "cancel" ||
-    transactionStatus === "deny" ||
-    transactionStatus === "expire"
-  ) {
-    paymentStatus = transactionStatus;
-  } else if (transactionStatus === "pending") {
-    paymentStatus = "pending";
-  }
-
-  console.log(`🔄 Updating donation ${orderId} to status: ${paymentStatus}`);
-
-  // Update donation status
-  donation.paymentStatus = paymentStatus;
-  donation.transactionId = notification.transaction_id;
-  donation.paymentType = paymentType;
-  donation.midtransResponse = notification;
-
-  // Jika pembayaran berhasil (settlement)
-  if (paymentStatus === "settlement") {
-    donation.paidAt = new Date();
-
-    console.log(`✅ Payment SUCCESS for ${orderId}`);
-
-    // Update event donation current amount
-    try {
-      const event = await Events.findById(donation.eventId);
-      if (event) {
-        event.donationCurrent += donation.amount;
-        event.actualCost += donation.amount;
-        await event.save();
-        console.log(`💰 Updated event ${event.title}: +${donation.amount}`);
-      }
-    } catch (eventUpdateError) {
-      console.error("Error updating event:", eventUpdateError);
-      // Jangan gagalkan webhook karena error update event
-    }
-  }
-
-  await donation.save();
-
-  console.log(`✅ Donation ${orderId} updated successfully`);
-
-  // PENTING: Selalu return 200 ke Midtrans
+  // PENTING: Return 200 dulu untuk acknowledge Midtrans
+  // Biar webhook tidak di-retry terus-menerus
   res.status(200).json({
     success: true,
-    message: "Notification processed successfully",
+    message: "Notification received",
   });
+
+  // Proses di background (setelah response)
+  try {
+    // Check jika ini adalah test notification dari Midtrans Dashboard
+    const isTest =
+      !notification.order_id ||
+      notification.order_id === "test" ||
+      !notification.transaction_status;
+
+    if (isTest) {
+      console.log("🧪 This is a TEST notification from Midtrans Dashboard");
+      console.log("✅ Test notification accepted");
+      return;
+    }
+
+    console.log("📋 Processing real notification:", {
+      orderId: notification.order_id,
+      transactionStatus: notification.transaction_status,
+      fraudStatus: notification.fraud_status,
+    });
+
+    // Verifikasi signature untuk keamanan (skip untuk test)
+    const isValidSignature = verifySignature({
+      order_id: notification.order_id,
+      status_code: notification.status_code,
+      gross_amount: notification.gross_amount,
+      server_key: process.env.MIDTRANS_SERVER_KEY,
+      signature_key: notification.signature_key,
+    });
+
+    if (!isValidSignature) {
+      console.error("❌ Invalid signature for order:", notification.order_id);
+      console.error("Signature details:", {
+        received: notification.signature_key,
+        order_id: notification.order_id,
+        status_code: notification.status_code,
+        gross_amount: notification.gross_amount,
+      });
+      return; // Jangan throw error, biar tidak retry
+    }
+
+    const orderId = notification.order_id;
+    const transactionStatus = notification.transaction_status;
+    const fraudStatus = notification.fraud_status;
+    const paymentType = notification.payment_type;
+
+    // Cari donation berdasarkan order ID
+    const donation = await Donation.findOne({ orderId });
+    if (!donation) {
+      console.error("❌ Donation not found:", orderId);
+      return; // Jangan throw error
+    }
+
+    let paymentStatus = "pending";
+
+    // Handle semua status dari Midtrans
+    if (transactionStatus === "capture") {
+      if (fraudStatus === "accept") {
+        paymentStatus = "settlement";
+      } else if (fraudStatus === "challenge") {
+        paymentStatus = "challenge";
+      } else {
+        paymentStatus = "deny";
+      }
+    } else if (
+      transactionStatus === "settlement" ||
+      transactionStatus === "success"
+    ) {
+      paymentStatus = "settlement";
+    } else if (["cancel", "deny", "expire"].includes(transactionStatus)) {
+      paymentStatus = transactionStatus;
+    } else if (transactionStatus === "pending") {
+      paymentStatus = "pending";
+    }
+
+    console.log(`🔄 Updating donation ${orderId} to status: ${paymentStatus}`);
+
+    // Update donation status
+    donation.paymentStatus = paymentStatus;
+    donation.transactionId = notification.transaction_id;
+    donation.paymentType = paymentType;
+    donation.midtransResponse = notification;
+
+    // Jika pembayaran berhasil (settlement)
+    if (paymentStatus === "settlement") {
+      donation.paidAt = new Date();
+      console.log(`✅ Payment SUCCESS for ${orderId}`);
+
+      // Update event donation current amount
+      try {
+        const event = await Events.findById(donation.eventId);
+        if (event) {
+          event.donationCurrent += donation.amount;
+          event.actualCost += donation.amount;
+          await event.save();
+          console.log(`💰 Updated event ${event.title}: +${donation.amount}`);
+        }
+      } catch (eventUpdateError) {
+        console.error("❌ Error updating event:", eventUpdateError);
+      }
+    }
+
+    await donation.save();
+    console.log(`✅ Donation ${orderId} updated successfully`);
+    console.log("========= NOTIFICATION PROCESSING COMPLETE =========");
+  } catch (error) {
+    console.error("❌ Error processing notification:", error);
+    console.error("Error stack:", error.stack);
+    // Jangan throw, biar tidak retry
+  }
 });
 
 export const handleMidtransRedirect = asyncHandler(async (req, res) => {

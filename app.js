@@ -11,14 +11,23 @@ const corsOptions = {
   origin: function (origin, callback) {
     const allowed = [
       "http://localhost:5173",
+      "http://localhost:5174", // ✅ Port frontend Anda
       "https://frontend-ulil.vercel.app",
     ];
 
     // Izinkan semua deployment preview dari Vercel
+    const isVercelPreview =
+      origin && /frontend-ulil.*\.vercel\.app$/.test(origin);
+
+    // Izinkan localhost hanya di development
+    const isLocalhost = origin && /^http:\/\/localhost:\d+$/.test(origin);
+    const isDevelopment = process.env.NODE_ENV !== "production";
+
     if (
-      !origin ||
+      !origin || // Request dari server yang sama (Postman, curl, dll)
       allowed.includes(origin) ||
-      /frontend-ulil.*\.vercel\.app$/.test(origin)
+      isVercelPreview ||
+      (isLocalhost && isDevelopment) // ✅ Localhost hanya di development
     ) {
       callback(null, true);
     } else {
@@ -26,14 +35,12 @@ const corsOptions = {
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ Tambahkan ini
-  allowedHeaders: ["Content-Type", "Authorization", "Cookie"], // ✅ Tambahkan ini
-  exposedHeaders: ["Set-Cookie"], // ✅ Tambahkan ini jika pakai cookie
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie", "api_key"], // ✅ Tambahkan api_key
+  exposedHeaders: ["Set-Cookie"],
 };
 
 app.use(cors(corsOptions));
-
-// ✅ TAMBAHKAN: Handle preflight requests untuk semua routes
 app.options("*", cors(corsOptions));
 
 app.use(express.json());
@@ -70,6 +77,7 @@ app.get("/", (req, res) => {
     message: "API is running",
     status: "success",
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || "development",
   });
 });
 

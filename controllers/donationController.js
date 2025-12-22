@@ -162,7 +162,7 @@ export const handleMidtransNotification = asyncHandler(async (req, res) => {
       fraudStatus: notification.fraud_status,
     });
 
-    Verifikasi signature untuk keamanan (skip untuk test)
+    // Verifikasi signature untuk keamanan (skip untuk test)
     const isValidSignature = verifySignature({
       order_id: notification.order_id,
       status_code: notification.status_code,

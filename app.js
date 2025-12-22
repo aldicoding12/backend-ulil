@@ -13,6 +13,7 @@ const corsOptions = {
       "http://localhost:5173",
       "http://localhost:5174", // ✅ Port frontend Anda
       "https://frontend-ulil.vercel.app",
+      "https://www.ulilalbabunm.org",
     ];
 
     // Izinkan semua deployment preview dari Vercel
